@@ -1,1 +1,6 @@
 streamlit
+PyGithub 
+openai 
+langchain 
+langchain-openai
+markdown
