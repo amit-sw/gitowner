@@ -21,6 +21,14 @@ You are a code analysis expoert.
 
 Based on these check-ins, please identify the key code areas, as well as the best two experts on each.
 """
+DEFAULT_INITIAL_ANALYSIS_PROMPT = DEFAULT_PROMPT
+
+DEFAULT_FINAL_SUMMARY_PROMPT = """
+You are a code summarization expert.
+Based on the following individual analyses of commit chunks, please synthesize a single, coherent summary.
+Identify key overall themes, common areas of change, and the most impacted experts.
+Ensure the final output is a unified report.
+"""
 
 def get_commits(repo_owner=DEFAULT_REPO_OWNER, repo_name=DEFAULT_REPO_NAME):
   try:
@@ -75,82 +83,248 @@ def extract_commit_info(commits, max_count, degree_of_parallelism):
   logging.info("Finished parallel extraction of commit info.")
   return "".join(commit_strings)
 
-def get_llm_response(input_string: str, system_prompt: str=DEFAULT_PROMPT, max_context_window: int=3000) -> str:
-    estimated_tokens = len(input_string) / 4
-    llm = ChatOpenAI(model=OPENAI_MODEL, api_key=st.secrets['OPENAI_API_KEY'])
+def _call_llm_for_chunk(chunk_text: str, system_prompt: str) -> str:
+    """
+    Calls the OpenAI LLM for a single chunk of text.
+    """
+    logging.info(f"Calling LLM for chunk starting with: '{chunk_text[:50]}...'")
+    try:
+        llm = ChatOpenAI(model=OPENAI_MODEL, api_key=st.secrets['OPENAI_API_KEY'])
+        messages = [
+            SystemMessage(content=system_prompt),
+            HumanMessage(content=chunk_text)
+        ]
+        response = llm.invoke(messages)
+        logging.info(f"LLM call successful for chunk starting with: '{chunk_text[:50]}...'")
+        return response.content
+    except Exception as e:
+        logging.error(f"Error processing chunk with LLM ('{chunk_text[:50]}...'): {e}", exc_info=True)
+        # Display error to Streamlit UI as well, as this happens in a thread.
+        # Consider if st.error is thread-safe or if errors should be collected and displayed in main thread.
+        # For now, returning error message is safer.
+        # st.error(f"LLM Error for a text chunk: {e}") 
+        return f"Error processing chunk with LLM: {e}"
+
+def analyze_text_chunks_parallel(full_text: str, degree_of_parallelism: int, max_context_window: int, system_prompt: str) -> list[str]:
+    """
+    Splits text into chunks and analyzes them in parallel using an LLM.
+    """
+    logging.info(f"Starting parallel analysis. Parallelism: {degree_of_parallelism}, Max Context: {max_context_window}.")
+    
+    if not full_text:
+        logging.warning("analyze_text_chunks_parallel called with empty full_text.")
+        return ["Error: No text provided for analysis."]
+
+    # Chunking logic (adapted from get_llm_response)
+    individual_chunks = []
+    estimated_tokens = len(full_text) / 4
 
     if estimated_tokens <= max_context_window:
-        logging.info("Input fits within context window. Processing as a single call.")
-        try:
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=input_string)
-            ]
-            response = llm.invoke(messages)
-            return response.content
-        except Exception as e:
-            logging.error(f"Error calling LLM for single chunk: {e}")
-            st.error(f"An error occurred while communicating with the LLM: {e}")
-            return "Error: Could not get response from LLM."
+        logging.info("Input fits within context window. Processing as a single chunk.")
+        individual_chunks.append(full_text)
+    else:
+        logging.info("Input exceeds context window. Splitting into chunks.")
+        commit_separator = "\n-------------------------\n"
+        commit_texts_parts = full_text.split(commit_separator)
+        
+        current_chunk_text = ""
+        for i, part in enumerate(commit_texts_parts):
+            # Determine if the part is a complete commit text or just a segment
+            commit_text_entry = part
+            if i < len(commit_texts_parts) -1 or full_text.endswith(commit_separator):
+                 commit_text_entry += commit_separator
+            
+            if not commit_text_entry.strip(): # Skip effectively empty parts
+                continue
 
-    logging.info("Input exceeds context window. Splitting into chunks.")
-    llm_responses = []
-    commit_separator = "\n-------------------------\n"
-    # Split the input string into commits, keeping the separator
-    # Add the separator back to each part, as split removes it.
-    # Filter out empty strings that might result from splitting if input_string starts/ends with separator or has multiple separators together.
-    commit_texts_parts = input_string.split(commit_separator)
-    individual_commits = []
-    for i, part in enumerate(commit_texts_parts):
-        if not part.strip(): # Skip empty parts
-            continue
-        # Add separator back, unless it's the last part and the original string didn't end with a separator
-        if i < len(commit_texts_parts) -1 or input_string.endswith(commit_separator):
-             individual_commits.append(part + commit_separator)
-        else:
-            individual_commits.append(part)
+            potential_chunk = current_chunk_text + commit_text_entry
+            if len(potential_chunk) / 4 > max_context_window:
+                if current_chunk_text: # Process the current_chunk_text accumulated so far
+                    individual_chunks.append(current_chunk_text)
+                current_chunk_text = commit_text_entry # Start new chunk
+            else:
+                current_chunk_text = potential_chunk
+        
+        if current_chunk_text: # Add any remaining part as the last chunk
+            individual_chunks.append(current_chunk_text)
 
+    if not individual_chunks: # Should not happen if full_text is not empty, but as a safeguard.
+        logging.warning("No chunks were created from non-empty text. This is unexpected.")
+        return ["Error: Failed to split text into manageable chunks."]
 
-    current_chunk = ""
-    for commit_text in individual_commits:
-        # Estimate token count for current_chunk + commit_text
-        potential_chunk = current_chunk + commit_text
-        if len(potential_chunk) / 4 > max_context_window:
-            # If current_chunk is not empty, process it
-            if current_chunk:
-                logging.info(f"Processing chunk of size {len(current_chunk)/4} tokens.")
+    logging.info(f"Created {len(individual_chunks)} chunks for parallel LLM analysis.")
+
+    results = []
+    if individual_chunks: # Ensure there's something to process
+        with concurrent.futures.ThreadPoolExecutor(max_workers=degree_of_parallelism) as executor:
+            # Submit tasks
+            future_to_chunk_summary = {
+                executor.submit(_call_llm_for_chunk, chunk, system_prompt): chunk 
+                for chunk in individual_chunks
+            }
+            
+            for future in concurrent.futures.as_completed(future_to_chunk_summary):
                 try:
-                    messages = [
-                        SystemMessage(content=system_prompt),
-                        HumanMessage(content=current_chunk)
-                    ]
-                    response = llm.invoke(messages)
-                    llm_responses.append(response.content)
-                except Exception as e:
-                    logging.error(f"Error calling LLM for a chunk: {e}")
-                    llm_responses.append(f"Error processing this chunk: {e}")
-            # Start new chunk with the current commit_text
-            current_chunk = commit_text
-            # If the commit_text itself is too large, it will be processed as is in the next iteration or after loop
-        else:
-            current_chunk = potential_chunk
+                    data = future.result()
+                    results.append(data)
+                except Exception as exc:
+                    chunk_info = future_to_chunk_summary[future][:50] # Get first 50 chars of chunk for context
+                    logging.error(f"Chunk (starting with '{chunk_info}...') generated an exception: {exc}", exc_info=True)
+                    results.append(f"Error processing chunk '{chunk_info}...': {exc}")
+    
+    logging.info(f"Finished parallel analysis of {len(individual_chunks)} chunks.")
+    return results
 
-    # Process any remaining chunk
-    if current_chunk:
-        logging.info(f"Processing final chunk of size {len(current_chunk)/4} tokens.")
-        try:
-            messages = [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=current_chunk)
-            ]
-            response = llm.invoke(messages)
-            llm_responses.append(response.content)
-        except Exception as e:
-            logging.error(f"Error calling LLM for the final chunk: {e}")
-            llm_responses.append(f"Error processing this chunk: {e}")
+def summarize_intermediate_results(analysis_strings: list[str], max_context_window: int, system_prompt: str) -> str:
+    """
+    Summarizes a list of analysis strings, potentially chunking the combined text if it's too large.
+    """
+    logging.info(f"Starting final summarization with {len(analysis_strings)} analysis strings.")
 
-    logging.info("Finished processing all chunks.")
-    return "\n\n---\n\n".join(llm_responses)
+    # Filter out error strings
+    valid_analyses = [s for s in analysis_strings if not s.startswith("Error processing chunk with LLM:")]
+    
+    if not valid_analyses:
+        logging.warning("No valid analysis strings to summarize after filtering errors.")
+        return "Error: No valid analyses to summarize."
+
+    # Combine valid analyses
+    # Using a thematic break for clarity, as '\n\n' might already be in the LLM responses.
+    combined_text = "\n\n---\n\n".join(valid_analyses)
+    logging.info(f"Combined text for summarization has length: {len(combined_text)}")
+
+    estimated_tokens = len(combined_text) / 4
+
+    if estimated_tokens <= max_context_window:
+        logging.info("Combined analysis text fits within context window. Making a single LLM call for final summary.")
+        summary = _call_llm_for_chunk(combined_text, system_prompt)
+        if summary.startswith("Error processing chunk with LLM:"):
+            logging.error(f"LLM call failed during final summarization (single call): {summary}")
+            return f"Error: LLM call failed during final summarization: {summary}"
+        return summary
+    else:
+        logging.info("Combined analysis text exceeds context window. Chunking for final summarization.")
+        summary_chunks_results = []
+        # Split by paragraph, but a paragraph could be very long.
+        # A more robust strategy might involve splitting by sentences or a fixed number of words/tokens.
+        # For now, splitting by '\n\n' which is a common paragraph-like separator in LLM outputs.
+        paragraphs = combined_text.split("\n\n")
+        
+        current_summary_chunk = ""
+        for para in paragraphs:
+            if not para.strip(): # Skip empty paragraphs
+                continue
+
+            # Estimate token count for current_summary_chunk + next paragraph
+            potential_chunk = current_summary_chunk + "\n\n" + para if current_summary_chunk else para
+            if len(potential_chunk) / 4 > max_context_window:
+                if current_summary_chunk: # Process the current_summary_chunk accumulated so far
+                    logging.info(f"Processing summary chunk of size {len(current_summary_chunk)/4} tokens.")
+                    chunk_summary = _call_llm_for_chunk(current_summary_chunk, system_prompt)
+                    if chunk_summary.startswith("Error processing chunk with LLM:"):
+                        logging.warning(f"LLM call failed for a summary chunk: {chunk_summary}")
+                        # Optionally, append the error or skip this chunk's summary
+                        summary_chunks_results.append(f"Note: A sub-summary chunk resulted in an error: {chunk_summary}")
+                    else:
+                        summary_chunks_results.append(chunk_summary)
+                current_summary_chunk = para # Start new chunk with the current paragraph
+            else:
+                current_summary_chunk = potential_chunk
+        
+        # Process any remaining chunk
+        if current_summary_chunk:
+            logging.info(f"Processing final summary chunk of size {len(current_summary_chunk)/4} tokens.")
+            chunk_summary = _call_llm_for_chunk(current_summary_chunk, system_prompt)
+            if chunk_summary.startswith("Error processing chunk with LLM:"):
+                logging.warning(f"LLM call failed for the final summary chunk: {chunk_summary}")
+                summary_chunks_results.append(f"Note: The final sub-summary chunk resulted in an error: {chunk_summary}")
+            else:
+                summary_chunks_results.append(chunk_summary)
+
+        if not summary_chunks_results:
+            logging.error("No summary chunks were processed successfully during chunked summarization.")
+            return "Error: Failed to produce any summary from chunked analysis text."
+
+        # Combine the summaries of chunks. For now, simple concatenation.
+        # A more sophisticated approach might involve another LLM call if this combined text is also too large,
+        # but that adds complexity and is not required by the current subtask.
+        final_summary = "\n\n---\n\n".join(summary_chunks_results)
+        logging.info("Successfully combined summaries from multiple chunks.")
+        return final_summary
+
+def process_commits_and_generate_report(
+    repo_owner: str, 
+    repo_name: str, 
+    commit_count: int, 
+    degree_of_parallelism: int, 
+    max_context_window: int, 
+    initial_analysis_prompt: str, 
+    final_summary_prompt: str, 
+    status_ui_update_callback
+) -> str:
+    """
+    Orchestrates the entire process of fetching commits, extracting information,
+    analyzing it, and generating a final summary.
+    """
+    logging.info(f"Starting report generation for {repo_owner}/{repo_name}.")
+
+    # 1. Get Commits
+    status_ui_update_callback(label="Fetching commits from repository...")
+    actual_commits = get_commits(repo_owner, repo_name)
+    if not actual_commits:
+        logging.error("Failed to fetch commits.")
+        status_ui_update_callback(label="Failed to fetch commits. Please check repository details and API key.", state="error")
+        return "Error: Could not fetch commits. Please check repository details and connectivity."
+
+    # 2. Extract Commit Info
+    status_ui_update_callback(label="Extracting commit information (parallel)...")
+    commit_text_data = extract_commit_info(actual_commits, commit_count, degree_of_parallelism)
+    if not commit_text_data and commit_count > 0 : # If commit_count is 0, empty text data is expected.
+        logging.error("Failed to extract commit information, or no information found.")
+        status_ui_update_callback(label="Failed to extract commit information or no data found for the given commits.", state="error")
+        return "Error: Could not extract commit information. Ensure commits exist and are accessible."
+    elif not commit_text_data and commit_count == 0:
+        logging.info("Commit count is 0. No commit information to extract or analyze.")
+        status_ui_update_callback(label="Commit count set to 0. No analysis performed.", state="complete")
+        return "Commit count is 0. No analysis performed."
+
+
+    # 3. Analyze Text Chunks Parallel (Actual Implementation)
+    status_ui_update_callback(label="Analyzing commit information with LLM (initial pass)...")
+    intermediate_analyses = analyze_text_chunks_parallel(
+        full_text=commit_text_data, 
+        degree_of_parallelism=degree_of_parallelism, 
+        max_context_window=max_context_window, 
+        system_prompt=initial_analysis_prompt
+    )
+    # Check if all results are errors or if the list is empty
+    if not intermediate_analyses or all(item.startswith("Error:") for item in intermediate_analyses):
+        logging.error(f"Failed during initial analysis phase. All chunks resulted in errors or no analysis performed. Result: {intermediate_analyses}")
+        status_ui_update_callback(label="Failed during initial LLM analysis. All chunks reported errors.", state="error")
+        error_detail = intermediate_analyses[0] if intermediate_analyses else "No analysis results."
+        return f"Error: Failed during initial analysis step. Details: {error_detail}"
+    
+    # Log if some chunks failed but not all
+    if any(item.startswith("Error:") for item in intermediate_analyses):
+        logging.warning(f"Some chunks failed during initial analysis. Results: {intermediate_analyses}")
+        # Decide if to proceed or fail; for now, we proceed with successful chunks for summarization
+
+    # 4. Summarize Intermediate Results (Actual Implementation)
+    status_ui_update_callback(label="Generating final summary with LLM...")
+    final_report_text = summarize_intermediate_results(
+        analysis_strings=intermediate_analyses, 
+        max_context_window=max_context_window, 
+        system_prompt=final_summary_prompt
+    )
+    if not final_report_text or final_report_text.startswith("Error:"):
+        logging.error(f"Failed during final summarization phase: {final_report_text}")
+        status_ui_update_callback(label="Failed during final summary generation.", state="error")
+        # final_report_text already contains the error message
+        return final_report_text 
+    
+    logging.info("Successfully generated report.")
+    return final_report_text
+
 
 def main():
 
@@ -162,33 +336,40 @@ def main():
     parallelism = st.sidebar.number_input(label='Parallelism', value=4, key='parallelism')
     max_context = st.sidebar.number_input(label='Max LLM Context (Tokens)', value=3000, key='max_context')
     if st.sidebar.button("Run Analysis"):
-        st.title(f"Running git analysis for {repo_owner}/{repo_name} ")
-        try:
-            with st.spinner("Working... Please wait.", show_time=True):
-                logging.info(f"Starting analysis for {repo_owner}/{repo_name} with {commit_count} commits, parallelism {parallelism}, max_context {max_context}")
+        st.title(f"Git Analysis Report for {repo_owner}/{repo_name}")
+        
+        with st.status("Starting analysis...", expanded=True) as status:
+            try:
+                logging.info(f"Main: Kicking off analysis for {repo_owner}/{repo_name}.")
                 
-                commits = get_commits(repo_owner, repo_name)
-                if not commits:
-                    logging.warning("No commits returned, aborting analysis.")
-                    # st.error is already called in get_commits if there's an issue
-                    return # Stop further processing
+                # Call the main orchestrator function
+                final_report = process_commits_and_generate_report(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    commit_count=commit_count,
+                    degree_of_parallelism=parallelism,
+                    max_context_window=max_context, # This will be used for both initial and final LLM calls for now
+                    initial_analysis_prompt=DEFAULT_INITIAL_ANALYSIS_PROMPT,
+                    final_summary_prompt=DEFAULT_FINAL_SUMMARY_PROMPT,
+                    status_ui_update_callback=lambda label, state="running": status.update(label=label, state=state)
+                )
+                
+                if "Error:" in final_report or not final_report:
+                    status.update(label="Analysis encountered an error.", state="error", expanded=True)
+                    # Error message is already part of final_report or handled by st.error in sub-functions
+                elif "No analysis performed." in final_report: # Specific case for commit_count = 0
+                     status.update(label="Analysis complete.", state="complete", expanded=False)
+                else:
+                    status.update(label="Analysis complete!", state="complete", expanded=False)
+                
+                logging.info("Main: Analysis process finished. Displaying report.")
+                st.markdown(final_report)
 
-                stri = extract_commit_info(commits, commit_count, parallelism)
-                if not stri and commit_count > 0 : # Check if stri is empty but we expected commits
-                    logging.warning("Commit info extraction returned empty, though commits were present.")
-                    # extract_commit_info might show an st.error, or we can add one here
-                    # st.warning("Could not extract information from commits, though commits were found.")
-                    # Depending on desired behavior, we might want to return or continue
-                # If stri is empty at this point, get_llm_response will handle it.
-
-                response_text = get_llm_response(stri, max_context_window=max_context)
-            
-            logging.info("Analysis finished. Displaying response.")
-            st.markdown(response_text)
-
-        except Exception as e:
-            logging.error(f"An unexpected error occurred in main analysis block: {e}", exc_info=True)
-            st.error(f"An unexpected error occurred during the analysis: {e}")
+            except Exception as e:
+                # This outer exception is for unexpected errors in the main flow or Streamlit issues.
+                logging.error(f"Main: An unexpected error occurred: {e}", exc_info=True)
+                status.update(label=f"An critical unexpected error occurred: {e}", state="error", expanded=True)
+                st.error(f"A critical unexpected error occurred: {e}")
 
 
 if __name__ == "__main__":
