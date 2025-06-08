@@ -51,7 +51,7 @@ def run_line_count_analysis(repo_owner: str, repo_name: str, commit_count: int, 
             status_placeholder.info(f"{label} ({elapsed:.1f}s elapsed)")
 
     with st.spinner("Running line count analysis..."):
-        stats_report = process_commits_and_generate_stats(
+        daily_table, weekly_table, monthly_table, daily_df, weekly_df, monthly_df = process_commits_and_generate_stats(
             repo_owner=repo_owner,
             repo_name=repo_name,
             commit_count=commit_count,
@@ -59,10 +59,24 @@ def run_line_count_analysis(repo_owner: str, repo_name: str, commit_count: int, 
             status_ui_update_callback=update_status,
         )
         update_status("Line count analysis complete!", state="complete")
-        if stats_report:
-            st.markdown(stats_report)
-        else:
-            st.write("No statistics available.")
+
+        if daily_df is not None:
+            st.subheader("Daily")
+            st.line_chart(daily_df.set_index(daily_df.columns[0])[ ["Lines Added", "Lines Deleted"] ])
+            with st.expander("Show Daily Table"):
+                st.markdown(daily_table)
+
+        if weekly_df is not None:
+            st.subheader("Weekly")
+            st.line_chart(weekly_df.set_index(weekly_df.columns[0])[ ["Lines Added", "Lines Deleted"] ])
+            with st.expander("Show Weekly Table"):
+                st.markdown(weekly_table)
+
+        if monthly_df is not None:
+            st.subheader("Monthly")
+            st.line_chart(monthly_df.set_index(monthly_df.columns[0])[ ["Lines Added", "Lines Deleted"] ])
+            with st.expander("Show Monthly Table"):
+                st.markdown(monthly_table)
     total_time = time.time() - start_time
     status_placeholder.success(f"Total time taken: {total_time:.2f}s")
 

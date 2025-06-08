@@ -9,6 +9,9 @@ from github_utils import (
     compute_daily_stats_table,
     compute_weekly_stats_table,
     compute_monthly_stats_table,
+    compute_daily_stats_df,
+    compute_weekly_stats_df,
+    compute_monthly_stats_df,
 )
 from llm_utils import analyze_text_chunks_parallel, summarize_intermediate_results
 
@@ -33,13 +36,13 @@ def fetch_commit_data(
             state="error",
         )
         logging.error("Failed to fetch commits.")
-        return None, "", "", ""
+        return None, "", "", "", []
 
     commit_text = extract_commit_info(commits, commit_count, degree_of_parallelism)
     daily_stats = compute_daily_stats_table(commits, commit_count)
     weekly_stats = compute_weekly_stats_table(commits, commit_count)
     monthly_stats = compute_monthly_stats_table(commits, commit_count)
-    return commit_text, daily_stats, weekly_stats, monthly_stats
+    return commit_text, daily_stats, weekly_stats, monthly_stats, commits
 
 
 def process_commits_and_generate_report(
@@ -52,7 +55,7 @@ def process_commits_and_generate_report(
     final_summary_prompt: str,
     status_ui_update_callback,
 ) -> Tuple[str, str]:
-    commit_text, daily, weekly, monthly = fetch_commit_data(
+    commit_text, daily, weekly, monthly, _ = fetch_commit_data(
         repo_owner,
         repo_name,
         commit_count,
@@ -98,8 +101,8 @@ def process_commits_and_generate_stats(
     commit_count: int,
     degree_of_parallelism: int,
     status_ui_update_callback,
-) -> str:
-    commit_text, daily, weekly, monthly = fetch_commit_data(
+):
+    commit_text, daily, weekly, monthly, commits = fetch_commit_data(
         repo_owner,
         repo_name,
         commit_count,
@@ -107,5 +110,10 @@ def process_commits_and_generate_stats(
         status_ui_update_callback,
     )
     if commit_text is None:
-        return ""
-    return "\n\n".join([daily, weekly, monthly])
+        return "", "", "", None, None, None
+
+    daily_df = compute_daily_stats_df(commits, commit_count)
+    weekly_df = compute_weekly_stats_df(commits, commit_count)
+    monthly_df = compute_monthly_stats_df(commits, commit_count)
+
+    return daily, weekly, monthly, daily_df, weekly_df, monthly_df
