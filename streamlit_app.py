@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 OPENAI_MODEL="gpt-4.1-mini"
 DEFAULT_REPO_OWNER="deepchem"
 DEFAULT_REPO_NAME="deepchem"
-DEFAULT_COMMIT_COUNT=20
+DEFAULT_COMMIT_COUNT=2000
 
 DEFAULT_PROMPT="""
 You are a code analysis expoert.
@@ -548,8 +548,8 @@ def main():
         key='b'
     )
     commit_count=st.sidebar.number_input(label='commits',value=DEFAULT_COMMIT_COUNT,key='c')
-    parallelism = st.sidebar.number_input(label='Parallelism', value=4, key='parallelism')
-    max_context = st.sidebar.number_input(label='Max LLM Context (Tokens)', value=3000, key='max_context')
+    parallelism = st.sidebar.number_input(label='Parallelism', value=20, key='parallelism')
+    max_context = st.sidebar.number_input(label='Max LLM Context (Tokens)', value=20000, key='max_context')
     run_stats = st.sidebar.button("Run Line Count Analysis")
     run_contrib = st.sidebar.button("Run Contributor Analysis")
 
