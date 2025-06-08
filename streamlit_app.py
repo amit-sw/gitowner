@@ -12,8 +12,8 @@ from report_generator import (
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-DEFAULT_REPO_OWNER = "deepchem"
-DEFAULT_REPO_NAME = "deepchem"
+DEFAULT_REPO_OWNER = "amit-sw"
+DEFAULT_REPO_NAME = "gitowner"
 DEFAULT_COMMIT_COUNT = 2000
 
 DEFAULT_PROMPT = """
