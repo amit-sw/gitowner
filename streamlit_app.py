@@ -55,12 +55,18 @@ def get_repo_candidates(repo_owner: str) -> list[str]:
         logging.error(f"Error fetching repos for {repo_owner}: {e}")
         return []
 
-def get_commits(repo_owner=DEFAULT_REPO_OWNER, repo_name=DEFAULT_REPO_NAME, max_count: int | None = None):
+def get_commits(
+    repo_owner: str = DEFAULT_REPO_OWNER,
+    repo_name: str = DEFAULT_REPO_NAME,
+    max_count: int | None = None,
+    degree_of_parallelism: int = 4,
+):
     """Return a list of non-merge commits for ``repo_owner/repo_name``.
 
     Merge commits (those with multiple parents) are skipped so that each code
     change is only analyzed once. When ``max_count`` is provided, iteration
-    stops after collecting that many commits.
+    stops after collecting that many commits. Commit details are fetched in
+    parallel for faster processing.
     """
     try:
         access_token = st.secrets["GITHUB_API_KEY"]
@@ -69,16 +75,26 @@ def get_commits(repo_owner=DEFAULT_REPO_OWNER, repo_name=DEFAULT_REPO_NAME, max_
         repo = g.get_repo(f"{repo_owner}/{repo_name}")
         logging.info(f"Fetching commits for {repo_owner}/{repo_name}")
 
-        filtered = []
+        commit_shas = []
         for commit in repo.get_commits():
             # Skip merge commits which have multiple parents
             if len(commit.parents) > 1:
                 continue
-            filtered.append(commit)
-            if max_count is not None and len(filtered) >= max_count:
+            commit_shas.append(commit.sha)
+            if max_count is not None and len(commit_shas) >= max_count:
                 break
 
-        return filtered
+        def fetch_single_commit(sha):
+            try:
+                return repo.get_commit(sha)
+            except Exception as e:
+                logging.error(f"Error fetching commit {sha}: {e}")
+                return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=degree_of_parallelism) as executor:
+            commits = list(filter(None, executor.map(fetch_single_commit, commit_shas)))
+
+        return commits
     except Exception as e:
         logging.error(f"Error fetching commits for {repo_owner}/{repo_name}: {e}")
         st.error(
@@ -412,7 +428,12 @@ def process_commits_and_generate_report(
 
     # 1. Get Commits
     status_ui_update_callback(label="Fetching commits from repository...")
-    actual_commits = get_commits(repo_owner, repo_name, max_count=commit_count)
+    actual_commits = get_commits(
+        repo_owner,
+        repo_name,
+        max_count=commit_count,
+        degree_of_parallelism=degree_of_parallelism,
+    )
     if not actual_commits:
         logging.error("Failed to fetch commits.")
         status_ui_update_callback(label="Failed to fetch commits. Please check repository details and API key.", state="error")
@@ -483,7 +504,12 @@ def process_commits_and_generate_stats(
     logging.info(f"Starting stats generation for {repo_owner}/{repo_name}.")
 
     status_ui_update_callback(label="Fetching commits from repository...")
-    actual_commits = get_commits(repo_owner, repo_name, max_count=commit_count)
+    actual_commits = get_commits(
+        repo_owner,
+        repo_name,
+        max_count=commit_count,
+        degree_of_parallelism=degree_of_parallelism,
+    )
     if not actual_commits:
         logging.error("Failed to fetch commits.")
         status_ui_update_callback(
@@ -492,10 +518,19 @@ def process_commits_and_generate_stats(
         )
         return ""
 
-    status_ui_update_callback(label="Computing line count statistics...")
+    status_ui_update_callback(label=f"Fetched {len(actual_commits)} commits", state="complete")
+
+    status_ui_update_callback(label="Computing daily statistics...")
     daily_stats_table = compute_daily_stats_table(actual_commits, commit_count)
+    status_ui_update_callback(label="Daily statistics computed", state="complete")
+
+    status_ui_update_callback(label="Computing weekly statistics...")
     weekly_stats_table = compute_weekly_stats_table(actual_commits, commit_count)
+    status_ui_update_callback(label="Weekly statistics computed", state="complete")
+
+    status_ui_update_callback(label="Computing monthly statistics...")
     monthly_stats_table = compute_monthly_stats_table(actual_commits, commit_count)
+    status_ui_update_callback(label="Monthly statistics computed", state="complete")
 
     logging.info("Successfully generated stats only report.")
     return "\n\n".join([daily_stats_table, weekly_stats_table, monthly_stats_table])
