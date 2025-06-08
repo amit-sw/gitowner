@@ -354,15 +354,15 @@ def summarize_intermediate_results(analysis_strings: list[str], max_context_wind
         return final_summary
 
 def process_commits_and_generate_report(
-    repo_owner: str, 
-    repo_name: str, 
-    commit_count: int, 
-    degree_of_parallelism: int, 
-    max_context_window: int, 
-    initial_analysis_prompt: str, 
-    final_summary_prompt: str, 
+    repo_owner: str,
+    repo_name: str,
+    commit_count: int,
+    degree_of_parallelism: int,
+    max_context_window: int,
+    initial_analysis_prompt: str,
+    final_summary_prompt: str,
     status_ui_update_callback
-) -> str:
+) -> tuple[str, str]:
     """
     Orchestrates the entire process of fetching commits, extracting information,
     analyzing it, and generating a final summary.
@@ -375,7 +375,7 @@ def process_commits_and_generate_report(
     if not actual_commits:
         logging.error("Failed to fetch commits.")
         status_ui_update_callback(label="Failed to fetch commits. Please check repository details and API key.", state="error")
-        return "Error: Could not fetch commits. Please check repository details and connectivity."
+        return "", "Error: Could not fetch commits. Please check repository details and connectivity."
 
     # 2. Extract Commit Info
     status_ui_update_callback(label="Extracting commit information (parallel)...")
@@ -383,14 +383,14 @@ def process_commits_and_generate_report(
     daily_stats_table = compute_daily_stats_table(actual_commits, commit_count)
     weekly_stats_table = compute_weekly_stats_table(actual_commits, commit_count)
     monthly_stats_table = compute_monthly_stats_table(actual_commits, commit_count)
-    if not commit_text_data and commit_count > 0 : # If commit_count is 0, empty text data is expected.
+    if not commit_text_data and commit_count > 0 :  # If commit_count is 0, empty text data is expected.
         logging.error("Failed to extract commit information, or no information found.")
         status_ui_update_callback(label="Failed to extract commit information or no data found for the given commits.", state="error")
-        return "Error: Could not extract commit information. Ensure commits exist and are accessible."
+        return "", "Error: Could not extract commit information. Ensure commits exist and are accessible."
     elif not commit_text_data and commit_count == 0:
         logging.info("Commit count is 0. No commit information to extract or analyze.")
         status_ui_update_callback(label="Commit count set to 0. No analysis performed.", state="complete")
-        return "Commit count is 0. No analysis performed."
+        return "", "Commit count is 0. No analysis performed."
 
 
     # 3. Analyze Text Chunks Parallel (Actual Implementation)
@@ -406,7 +406,7 @@ def process_commits_and_generate_report(
         logging.error(f"Failed during initial analysis phase. All chunks resulted in errors or no analysis performed. Result: {intermediate_analyses}")
         status_ui_update_callback(label="Failed during initial LLM analysis. All chunks reported errors.", state="error")
         error_detail = intermediate_analyses[0] if intermediate_analyses else "No analysis results."
-        return f"Error: Failed during initial analysis step. Details: {error_detail}"
+        return "", f"Error: Failed during initial analysis step. Details: {error_detail}"
     
     # Log if some chunks failed but not all
     if any(item.startswith("Error:") for item in intermediate_analyses):
@@ -424,11 +424,11 @@ def process_commits_and_generate_report(
         logging.error(f"Failed during final summarization phase: {final_report_text}")
         status_ui_update_callback(label="Failed during final summary generation.", state="error")
         # final_report_text already contains the error message
-        return final_report_text 
+        return "", final_report_text
     
     logging.info("Successfully generated report.")
     combined_stats = "\n\n".join([daily_stats_table, weekly_stats_table, monthly_stats_table])
-    return combined_stats + "\n\n" + final_report_text
+    return combined_stats, final_report_text
 
 
 def main():
@@ -459,7 +459,7 @@ def main():
             try:
                 logging.info(f"Main: Kicking off analysis for {repo_owner}/{repo_name}.")
 
-                final_report = process_commits_and_generate_report(
+                stats_report, analysis_report = process_commits_and_generate_report(
                     repo_owner=repo_owner,
                     repo_name=repo_name,
                     commit_count=commit_count,
@@ -470,15 +470,23 @@ def main():
                     status_ui_update_callback=update_status
                 )
 
-                if "Error:" in final_report or not final_report:
+                if "Error:" in analysis_report or not analysis_report:
                     update_status("Analysis encountered an error.", state="error")
-                elif "No analysis performed." in final_report:
+                elif "No analysis performed." in analysis_report:
                     update_status("Analysis complete.", state="complete")
                 else:
                     update_status("Analysis complete!", state="complete")
 
                 logging.info("Main: Analysis process finished. Displaying report.")
-                st.markdown(final_report)
+
+                tabs = st.tabs(["Check-in Stats", "Contributor Analysis"])
+                with tabs[0]:
+                    if stats_report:
+                        st.markdown(stats_report)
+                    else:
+                        st.write("No statistics available.")
+                with tabs[1]:
+                    st.markdown(analysis_report)
 
             except Exception as e:
                 logging.error(f"Main: An unexpected error occurred: {e}", exc_info=True)
