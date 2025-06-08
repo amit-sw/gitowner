@@ -7,6 +7,7 @@ import json
 import markdown
 import concurrent.futures
 import logging
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -84,37 +85,104 @@ def extract_commit_info(commits, max_count, degree_of_parallelism):
   return "".join(commit_strings)
 
 def compute_daily_stats_table(commits, max_count):
-  """Return a markdown table summarizing daily commit stats."""
-  from collections import defaultdict
+    """Return a markdown table summarizing daily commit stats."""
+    from collections import defaultdict
 
-  daily = defaultdict(lambda: {"checkins": 0, "additions": 0, "deletions": 0})
-  count = 0
-  for commit in commits:
-      if count >= max_count:
-          break
-      date = commit.commit.author.date.date()
-      stats = commit.stats
-      daily[date]["checkins"] += 1
-      daily[date]["additions"] += stats.additions
-      daily[date]["deletions"] += stats.deletions
-      count += 1
+    daily = defaultdict(lambda: {"checkins": 0, "additions": 0, "deletions": 0})
+    count = 0
+    for commit in commits:
+        if count >= max_count:
+            break
+        date = commit.commit.author.date.date()
+        stats = commit.stats
+        daily[date]["checkins"] += 1
+        daily[date]["additions"] += stats.additions
+        daily[date]["deletions"] += stats.deletions
+        count += 1
 
-  header = "| Date | Check-ins | Lines Added | Lines Deleted |"
-  separator = "|------|-----------|-------------|---------------|"
-  lines = [header, separator]
+    header = "| Date | Check-ins | Lines Added | Lines Deleted |"
+    separator = "|------|-----------|-------------|---------------|"
+    lines = [header, separator]
 
-  total_checkins = total_additions = total_deletions = 0
-  for day in sorted(daily):
-      stats = daily[day]
-      lines.append(
-          f"| {day} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} |")
-      total_checkins += stats["checkins"]
-      total_additions += stats["additions"]
-      total_deletions += stats["deletions"]
+    total_checkins = total_additions = total_deletions = 0
+    for day in sorted(daily):
+        stats = daily[day]
+        lines.append(
+            f"| {day} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} |")
+        total_checkins += stats["checkins"]
+        total_additions += stats["additions"]
+        total_deletions += stats["deletions"]
 
-  lines.append(
-      f"| **Total** | **{total_checkins}** | **{total_additions}** | **{total_deletions}** |")
-  return "\n".join(lines)
+    lines.append(
+        f"| **Total** | **{total_checkins}** | **{total_additions}** | **{total_deletions}** |")
+    return "\n".join(lines)
+
+def compute_weekly_stats_table(commits, max_count):
+    """Return a markdown table summarizing weekly commit stats."""
+    from collections import defaultdict
+    weekly = defaultdict(lambda: {"checkins": 0, "additions": 0, "deletions": 0})
+    count = 0
+    for commit in commits:
+        if count >= max_count:
+            break
+        dt = commit.commit.author.date
+        year, week, _ = dt.isocalendar()
+        key = f"{year}-W{week:02d}"
+        stats = commit.stats
+        weekly[key]["checkins"] += 1
+        weekly[key]["additions"] += stats.additions
+        weekly[key]["deletions"] += stats.deletions
+        count += 1
+
+    header = "| Week | Check-ins | Lines Added | Lines Deleted |"
+    separator = "|------|-----------|-------------|---------------|"
+    lines = [header, separator]
+
+    total_checkins = total_additions = total_deletions = 0
+    for week in sorted(weekly):
+        stats = weekly[week]
+        lines.append(
+            f"| {week} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} |")
+        total_checkins += stats["checkins"]
+        total_additions += stats["additions"]
+        total_deletions += stats["deletions"]
+
+    lines.append(
+        f"| **Total** | **{total_checkins}** | **{total_additions}** | **{total_deletions}** |")
+    return "\n".join(lines)
+
+def compute_monthly_stats_table(commits, max_count):
+    """Return a markdown table summarizing monthly commit stats."""
+    from collections import defaultdict
+    monthly = defaultdict(lambda: {"checkins": 0, "additions": 0, "deletions": 0})
+    count = 0
+    for commit in commits:
+        if count >= max_count:
+            break
+        dt = commit.commit.author.date
+        key = dt.strftime("%Y-%m")
+        stats = commit.stats
+        monthly[key]["checkins"] += 1
+        monthly[key]["additions"] += stats.additions
+        monthly[key]["deletions"] += stats.deletions
+        count += 1
+
+    header = "| Month | Check-ins | Lines Added | Lines Deleted |"
+    separator = "|------|-----------|-------------|---------------|"
+    lines = [header, separator]
+
+    total_checkins = total_additions = total_deletions = 0
+    for month in sorted(monthly):
+        stats = monthly[month]
+        lines.append(
+            f"| {month} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} |")
+        total_checkins += stats["checkins"]
+        total_additions += stats["additions"]
+        total_deletions += stats["deletions"]
+
+    lines.append(
+        f"| **Total** | **{total_checkins}** | **{total_additions}** | **{total_deletions}** |")
+    return "\n".join(lines)
 
 def _call_llm_for_chunk(chunk_text: str, system_prompt: str) -> str:
     """
@@ -313,6 +381,8 @@ def process_commits_and_generate_report(
     status_ui_update_callback(label="Extracting commit information (parallel)...")
     commit_text_data = extract_commit_info(actual_commits, commit_count, degree_of_parallelism)
     daily_stats_table = compute_daily_stats_table(actual_commits, commit_count)
+    weekly_stats_table = compute_weekly_stats_table(actual_commits, commit_count)
+    monthly_stats_table = compute_monthly_stats_table(actual_commits, commit_count)
     if not commit_text_data and commit_count > 0 : # If commit_count is 0, empty text data is expected.
         logging.error("Failed to extract commit information, or no information found.")
         status_ui_update_callback(label="Failed to extract commit information or no data found for the given commits.", state="error")
@@ -357,7 +427,8 @@ def process_commits_and_generate_report(
         return final_report_text 
     
     logging.info("Successfully generated report.")
-    return daily_stats_table + "\n\n" + final_report_text
+    combined_stats = "\n\n".join([daily_stats_table, weekly_stats_table, monthly_stats_table])
+    return combined_stats + "\n\n" + final_report_text
 
 
 def main():
@@ -371,39 +442,51 @@ def main():
     max_context = st.sidebar.number_input(label='Max LLM Context (Tokens)', value=3000, key='max_context')
     if st.sidebar.button("Run Analysis"):
         st.title(f"Git Analysis Report for {repo_owner}/{repo_name}")
-        
-        with st.status("Starting analysis...", expanded=True) as status:
+
+        status_placeholder = st.empty()
+        start_time = time.time()
+
+        def update_status(label, state="running"):
+            elapsed = time.time() - start_time
+            if state == "error":
+                status_placeholder.error(f"{label} ({elapsed:.1f}s elapsed)")
+            elif state == "complete":
+                status_placeholder.success(f"{label} ({elapsed:.1f}s elapsed)")
+            else:
+                status_placeholder.info(f"{label} ({elapsed:.1f}s elapsed)")
+
+        with st.spinner("Running analysis..."):
             try:
                 logging.info(f"Main: Kicking off analysis for {repo_owner}/{repo_name}.")
-                
-                # Call the main orchestrator function
+
                 final_report = process_commits_and_generate_report(
                     repo_owner=repo_owner,
                     repo_name=repo_name,
                     commit_count=commit_count,
                     degree_of_parallelism=parallelism,
-                    max_context_window=max_context, # This will be used for both initial and final LLM calls for now
+                    max_context_window=max_context,
                     initial_analysis_prompt=DEFAULT_INITIAL_ANALYSIS_PROMPT,
                     final_summary_prompt=DEFAULT_FINAL_SUMMARY_PROMPT,
-                    status_ui_update_callback=lambda label, state="running": status.update(label=label, state=state)
+                    status_ui_update_callback=update_status
                 )
-                
+
                 if "Error:" in final_report or not final_report:
-                    status.update(label="Analysis encountered an error.", state="error", expanded=True)
-                    # Error message is already part of final_report or handled by st.error in sub-functions
-                elif "No analysis performed." in final_report: # Specific case for commit_count = 0
-                     status.update(label="Analysis complete.", state="complete", expanded=False)
+                    update_status("Analysis encountered an error.", state="error")
+                elif "No analysis performed." in final_report:
+                    update_status("Analysis complete.", state="complete")
                 else:
-                    status.update(label="Analysis complete!", state="complete", expanded=False)
-                
+                    update_status("Analysis complete!", state="complete")
+
                 logging.info("Main: Analysis process finished. Displaying report.")
                 st.markdown(final_report)
 
             except Exception as e:
-                # This outer exception is for unexpected errors in the main flow or Streamlit issues.
                 logging.error(f"Main: An unexpected error occurred: {e}", exc_info=True)
-                status.update(label=f"An critical unexpected error occurred: {e}", state="error", expanded=True)
+                update_status(f"A critical unexpected error occurred: {e}", state="error")
                 st.error(f"A critical unexpected error occurred: {e}")
+
+        total_time = time.time() - start_time
+        status_placeholder.success(f"Total time taken: {total_time:.2f}s")
 
 
 if __name__ == "__main__":
