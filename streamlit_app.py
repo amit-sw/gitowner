@@ -431,6 +431,35 @@ def process_commits_and_generate_report(
     return combined_stats, final_report_text
 
 
+def process_commits_and_generate_stats(
+    repo_owner: str,
+    repo_name: str,
+    commit_count: int,
+    degree_of_parallelism: int,
+    status_ui_update_callback
+) -> str:
+    """Generate line count statistics without running the LLM analysis."""
+    logging.info(f"Starting stats generation for {repo_owner}/{repo_name}.")
+
+    status_ui_update_callback(label="Fetching commits from repository...")
+    actual_commits = get_commits(repo_owner, repo_name)
+    if not actual_commits:
+        logging.error("Failed to fetch commits.")
+        status_ui_update_callback(
+            label="Failed to fetch commits. Please check repository details and API key.",
+            state="error",
+        )
+        return ""
+
+    status_ui_update_callback(label="Computing line count statistics...")
+    daily_stats_table = compute_daily_stats_table(actual_commits, commit_count)
+    weekly_stats_table = compute_weekly_stats_table(actual_commits, commit_count)
+    monthly_stats_table = compute_monthly_stats_table(actual_commits, commit_count)
+
+    logging.info("Successfully generated stats only report.")
+    return "\n\n".join([daily_stats_table, weekly_stats_table, monthly_stats_table])
+
+
 def main():
 
 
@@ -440,7 +469,57 @@ def main():
     commit_count=st.sidebar.number_input(label='commits',value=DEFAULT_COMMIT_COUNT,key='c')
     parallelism = st.sidebar.number_input(label='Parallelism', value=4, key='parallelism')
     max_context = st.sidebar.number_input(label='Max LLM Context (Tokens)', value=3000, key='max_context')
-    if st.sidebar.button("Run Analysis"):
+    run_stats = st.sidebar.button("Run Line Count Analysis")
+    run_contrib = st.sidebar.button("Run Contributor Analysis")
+
+    if run_stats:
+        st.title(f"Line Count Report for {repo_owner}/{repo_name}")
+
+        status_placeholder = st.empty()
+        start_time = time.time()
+
+        def update_status(label, state="running"):
+            elapsed = time.time() - start_time
+            if state == "error":
+                status_placeholder.error(f"{label} ({elapsed:.1f}s elapsed)")
+            elif state == "complete":
+                status_placeholder.success(f"{label} ({elapsed:.1f}s elapsed)")
+            else:
+                status_placeholder.info(f"{label} ({elapsed:.1f}s elapsed)")
+
+        with st.spinner("Running line count analysis..."):
+            try:
+                logging.info(
+                    f"Main: Running line count analysis for {repo_owner}/{repo_name}."
+                )
+
+                stats_report = process_commits_and_generate_stats(
+                    repo_owner=repo_owner,
+                    repo_name=repo_name,
+                    commit_count=commit_count,
+                    degree_of_parallelism=parallelism,
+                    status_ui_update_callback=update_status,
+                )
+
+                update_status("Line count analysis complete!", state="complete")
+
+                if stats_report:
+                    st.markdown(stats_report)
+                else:
+                    st.write("No statistics available.")
+
+            except Exception as e:
+                logging.error(
+                    f"Main: An unexpected error occurred during line count analysis: {e}",
+                    exc_info=True,
+                )
+                update_status(f"A critical unexpected error occurred: {e}", state="error")
+                st.error(f"A critical unexpected error occurred: {e}")
+
+        total_time = time.time() - start_time
+        status_placeholder.success(f"Total time taken: {total_time:.2f}s")
+
+    elif run_contrib:
         st.title(f"Git Analysis Report for {repo_owner}/{repo_name}")
 
         status_placeholder = st.empty()
@@ -455,9 +534,11 @@ def main():
             else:
                 status_placeholder.info(f"{label} ({elapsed:.1f}s elapsed)")
 
-        with st.spinner("Running analysis..."):
+        with st.spinner("Running contributor analysis..."):
             try:
-                logging.info(f"Main: Kicking off analysis for {repo_owner}/{repo_name}.")
+                logging.info(
+                    f"Main: Kicking off analysis for {repo_owner}/{repo_name}."
+                )
 
                 stats_report, analysis_report = process_commits_and_generate_report(
                     repo_owner=repo_owner,
@@ -467,7 +548,7 @@ def main():
                     max_context_window=max_context,
                     initial_analysis_prompt=DEFAULT_INITIAL_ANALYSIS_PROMPT,
                     final_summary_prompt=DEFAULT_FINAL_SUMMARY_PROMPT,
-                    status_ui_update_callback=update_status
+                    status_ui_update_callback=update_status,
                 )
 
                 if "Error:" in analysis_report or not analysis_report:
