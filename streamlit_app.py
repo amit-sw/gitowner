@@ -83,6 +83,39 @@ def extract_commit_info(commits, max_count, degree_of_parallelism):
   logging.info("Finished parallel extraction of commit info.")
   return "".join(commit_strings)
 
+def compute_daily_stats_table(commits, max_count):
+  """Return a markdown table summarizing daily commit stats."""
+  from collections import defaultdict
+
+  daily = defaultdict(lambda: {"checkins": 0, "additions": 0, "deletions": 0})
+  count = 0
+  for commit in commits:
+      if count >= max_count:
+          break
+      date = commit.commit.author.date.date()
+      stats = commit.stats
+      daily[date]["checkins"] += 1
+      daily[date]["additions"] += stats.additions
+      daily[date]["deletions"] += stats.deletions
+      count += 1
+
+  header = "| Date | Check-ins | Lines Added | Lines Deleted |"
+  separator = "|------|-----------|-------------|---------------|"
+  lines = [header, separator]
+
+  total_checkins = total_additions = total_deletions = 0
+  for day in sorted(daily):
+      stats = daily[day]
+      lines.append(
+          f"| {day} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} |")
+      total_checkins += stats["checkins"]
+      total_additions += stats["additions"]
+      total_deletions += stats["deletions"]
+
+  lines.append(
+      f"| **Total** | **{total_checkins}** | **{total_additions}** | **{total_deletions}** |")
+  return "\n".join(lines)
+
 def _call_llm_for_chunk(chunk_text: str, system_prompt: str) -> str:
     """
     Calls the OpenAI LLM for a single chunk of text.
@@ -279,6 +312,7 @@ def process_commits_and_generate_report(
     # 2. Extract Commit Info
     status_ui_update_callback(label="Extracting commit information (parallel)...")
     commit_text_data = extract_commit_info(actual_commits, commit_count, degree_of_parallelism)
+    daily_stats_table = compute_daily_stats_table(actual_commits, commit_count)
     if not commit_text_data and commit_count > 0 : # If commit_count is 0, empty text data is expected.
         logging.error("Failed to extract commit information, or no information found.")
         status_ui_update_callback(label="Failed to extract commit information or no data found for the given commits.", state="error")
@@ -323,7 +357,7 @@ def process_commits_and_generate_report(
         return final_report_text 
     
     logging.info("Successfully generated report.")
-    return final_report_text
+    return daily_stats_table + "\n\n" + final_report_text
 
 
 def main():
