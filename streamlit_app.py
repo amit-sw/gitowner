@@ -31,19 +31,60 @@ Identify key overall themes, common areas of change, and the most impacted exper
 Ensure the final output is a unified report.
 """
 
-def get_commits(repo_owner=DEFAULT_REPO_OWNER, repo_name=DEFAULT_REPO_NAME):
-  try:
-    access_token = st.secrets['GITHUB_API_KEY']
-    g = Github(access_token)
-    logging.info(f"Fetching repo: {repo_owner}/{repo_name}")
-    repo = g.get_repo(f"{repo_owner}/{repo_name}")
-    logging.info(f"Fetching commits for {repo_owner}/{repo_name}")
-    commits = repo.get_commits()
-    return commits
-  except Exception as e:
-    logging.error(f"Error fetching commits for {repo_owner}/{repo_name}: {e}")
-    st.error(f"Failed to fetch commits for {repo_owner}/{repo_name}. Please check the repository details and your GitHub API key. Error: {e}")
-    return []
+
+@st.cache_data(show_spinner=False)
+def get_repo_candidates(repo_owner: str) -> list[str]:
+    """Return a list of repository names owned by ``repo_owner``.
+
+    Tries to fetch both user and organization repositories. Errors are logged and
+    an empty list is returned on failure.
+    """
+    try:
+        access_token = st.secrets["GITHUB_API_KEY"]
+        g = Github(access_token)
+
+        try:
+            user = g.get_user(repo_owner)
+            repos = user.get_repos()
+        except Exception:
+            org = g.get_organization(repo_owner)
+            repos = org.get_repos()
+
+        return [repo.name for repo in repos]
+    except Exception as e:
+        logging.error(f"Error fetching repos for {repo_owner}: {e}")
+        return []
+
+def get_commits(repo_owner=DEFAULT_REPO_OWNER, repo_name=DEFAULT_REPO_NAME, max_count: int | None = None):
+    """Return a list of non-merge commits for ``repo_owner/repo_name``.
+
+    Merge commits (those with multiple parents) are skipped so that each code
+    change is only analyzed once. When ``max_count`` is provided, iteration
+    stops after collecting that many commits.
+    """
+    try:
+        access_token = st.secrets["GITHUB_API_KEY"]
+        g = Github(access_token)
+        logging.info(f"Fetching repo: {repo_owner}/{repo_name}")
+        repo = g.get_repo(f"{repo_owner}/{repo_name}")
+        logging.info(f"Fetching commits for {repo_owner}/{repo_name}")
+
+        filtered = []
+        for commit in repo.get_commits():
+            # Skip merge commits which have multiple parents
+            if len(commit.parents) > 1:
+                continue
+            filtered.append(commit)
+            if max_count is not None and len(filtered) >= max_count:
+                break
+
+        return filtered
+    except Exception as e:
+        logging.error(f"Error fetching commits for {repo_owner}/{repo_name}: {e}")
+        st.error(
+            f"Failed to fetch commits for {repo_owner}/{repo_name}. Please check the repository details and your GitHub API key. Error: {e}"
+        )
+        return []
 
 def _process_single_commit(commit):
   commit_info = f"\n\nCommit: {commit.sha}" + \
@@ -371,7 +412,7 @@ def process_commits_and_generate_report(
 
     # 1. Get Commits
     status_ui_update_callback(label="Fetching commits from repository...")
-    actual_commits = get_commits(repo_owner, repo_name)
+    actual_commits = get_commits(repo_owner, repo_name, max_count=commit_count)
     if not actual_commits:
         logging.error("Failed to fetch commits.")
         status_ui_update_callback(label="Failed to fetch commits. Please check repository details and API key.", state="error")
@@ -442,7 +483,7 @@ def process_commits_and_generate_stats(
     logging.info(f"Starting stats generation for {repo_owner}/{repo_name}.")
 
     status_ui_update_callback(label="Fetching commits from repository...")
-    actual_commits = get_commits(repo_owner, repo_name)
+    actual_commits = get_commits(repo_owner, repo_name, max_count=commit_count)
     if not actual_commits:
         logging.error("Failed to fetch commits.")
         status_ui_update_callback(
@@ -464,8 +505,13 @@ def main():
 
 
     st.sidebar.title("🎈Who dun it?")
-    repo_owner=st.sidebar.text_input(label='acct',value=DEFAULT_REPO_OWNER,key='a')
-    repo_name=st.sidebar.text_input(label='repo',value=DEFAULT_REPO_NAME,key='b')
+    repo_owner = st.sidebar.text_input(label='acct', value=DEFAULT_REPO_OWNER, key='a')
+    repo_candidates = get_repo_candidates(repo_owner)
+    repo_name = st.sidebar.selectbox(
+        label='repo',
+        options=repo_candidates if repo_candidates else [DEFAULT_REPO_NAME],
+        key='b'
+    )
     commit_count=st.sidebar.number_input(label='commits',value=DEFAULT_COMMIT_COUNT,key='c')
     parallelism = st.sidebar.number_input(label='Parallelism', value=4, key='parallelism')
     max_context = st.sidebar.number_input(label='Max LLM Context (Tokens)', value=3000, key='max_context')
