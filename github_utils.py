@@ -2,6 +2,7 @@ import logging
 from typing import List
 
 import streamlit as st
+import pandas as pd
 from github import Github
 import concurrent.futures
 
@@ -200,3 +201,72 @@ def compute_monthly_stats_table(commits, max_count: int) -> str:
         f"| **Total** | **{totals['checkins']}** | **{totals['additions']}** | **{totals['deletions']}** |"
     )
     return "\n".join(lines)
+
+
+def compute_daily_stats_df(commits, max_count: int) -> pd.DataFrame:
+    """Return a DataFrame with daily check-in statistics."""
+    from collections import defaultdict
+
+    daily = defaultdict(lambda: {"Check-ins": 0, "Lines Added": 0, "Lines Deleted": 0})
+    for count, commit in enumerate(commits):
+        if count >= max_count:
+            break
+        date = commit.commit.author.date.date()
+        stats = commit.stats
+        daily[date]["Check-ins"] += 1
+        daily[date]["Lines Added"] += stats.additions
+        daily[date]["Lines Deleted"] += stats.deletions
+
+    records = []
+    for day in sorted(daily):
+        rec = {"Date": str(day)}
+        rec.update(daily[day])
+        records.append(rec)
+    return pd.DataFrame(records)
+
+
+def compute_weekly_stats_df(commits, max_count: int) -> pd.DataFrame:
+    """Return a DataFrame with weekly check-in statistics."""
+    from collections import defaultdict
+
+    weekly = defaultdict(lambda: {"Check-ins": 0, "Lines Added": 0, "Lines Deleted": 0})
+    for count, commit in enumerate(commits):
+        if count >= max_count:
+            break
+        dt = commit.commit.author.date
+        year, week, _ = dt.isocalendar()
+        key = f"{year}-W{week:02d}"
+        stats = commit.stats
+        weekly[key]["Check-ins"] += 1
+        weekly[key]["Lines Added"] += stats.additions
+        weekly[key]["Lines Deleted"] += stats.deletions
+
+    records = []
+    for week in sorted(weekly):
+        rec = {"Week": week}
+        rec.update(weekly[week])
+        records.append(rec)
+    return pd.DataFrame(records)
+
+
+def compute_monthly_stats_df(commits, max_count: int) -> pd.DataFrame:
+    """Return a DataFrame with monthly check-in statistics."""
+    from collections import defaultdict
+
+    monthly = defaultdict(lambda: {"Check-ins": 0, "Lines Added": 0, "Lines Deleted": 0})
+    for count, commit in enumerate(commits):
+        if count >= max_count:
+            break
+        dt = commit.commit.author.date
+        key = dt.strftime("%Y-%m")
+        stats = commit.stats
+        monthly[key]["Check-ins"] += 1
+        monthly[key]["Lines Added"] += stats.additions
+        monthly[key]["Lines Deleted"] += stats.deletions
+
+    records = []
+    for month in sorted(monthly):
+        rec = {"Month": month}
+        rec.update(monthly[month])
+        records.append(rec)
+    return pd.DataFrame(records)
