@@ -60,22 +60,38 @@ def run_line_count_analysis(repo_owner: str, repo_name: str, commit_count: int, 
         )
         update_status("Line count analysis complete!", state="complete")
 
-        if daily_df is not None:
-            st.subheader("Daily")
-            st.line_chart(daily_df.set_index(daily_df.columns[0])[ ["Lines Added", "Lines Deleted"] ])
-            with st.expander("Show Daily Table"):
+        tabs = st.tabs(["Graphs", "Tables"])
+
+        with tabs[0]:
+            if daily_df is not None:
+                st.subheader("Daily")
+                st.line_chart(
+                    daily_df.set_index(daily_df.columns[0])[ ["Lines Added", "Lines Deleted"] ]
+                )
+
+            if weekly_df is not None:
+                st.subheader("Weekly")
+                st.line_chart(
+                    weekly_df.set_index(weekly_df.columns[0])[ ["Lines Added", "Lines Deleted"] ]
+                )
+
+            if monthly_df is not None:
+                st.subheader("Monthly")
+                st.line_chart(
+                    monthly_df.set_index(monthly_df.columns[0])[ ["Lines Added", "Lines Deleted"] ]
+                )
+
+        with tabs[1]:
+            if daily_table:
+                st.subheader("Daily")
                 st.markdown(daily_table)
 
-        if weekly_df is not None:
-            st.subheader("Weekly")
-            st.line_chart(weekly_df.set_index(weekly_df.columns[0])[ ["Lines Added", "Lines Deleted"] ])
-            with st.expander("Show Weekly Table"):
+            if weekly_table:
+                st.subheader("Weekly")
                 st.markdown(weekly_table)
 
-        if monthly_df is not None:
-            st.subheader("Monthly")
-            st.line_chart(monthly_df.set_index(monthly_df.columns[0])[ ["Lines Added", "Lines Deleted"] ])
-            with st.expander("Show Monthly Table"):
+            if monthly_table:
+                st.subheader("Monthly")
                 st.markdown(monthly_table)
     total_time = time.time() - start_time
     status_placeholder.success(f"Total time taken: {total_time:.2f}s")
