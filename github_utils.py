@@ -270,3 +270,19 @@ def compute_monthly_stats_df(commits, max_count: int) -> pd.DataFrame:
         rec.update(monthly[month])
         records.append(rec)
     return pd.DataFrame(records)
+
+
+def get_repo_contents(repo_owner: str, repo_name: str):
+    """Return the contents of a repository."""
+    try:
+        access_token = st.secrets["GITHUB_API_KEY"]
+        g = Github(access_token)
+        repo = g.get_repo(f"{repo_owner}/{repo_name}")
+        contents = repo.get_contents("")
+        return contents
+    except Exception as e:
+        logging.error(f"Error fetching contents for {repo_owner}/{repo_name}: {e}")
+        st.error(
+            f"Failed to fetch contents for {repo_owner}/{repo_name}. Please check the repository details and your GitHub API key. Error: {e}"
+        )
+        return []
