@@ -64,6 +64,29 @@ def get_commits(
         return []
 
 
+def iter_commits_serial(repo_owner: str, repo_name: str):
+    """Yield non-merge commits serially with stats for ``repo_owner/repo_name``."""
+    try:
+        access_token = st.secrets["GITHUB_API_KEY"]
+        g = Github(access_token)
+        logging.info(f"Fetching repo: {repo_owner}/{repo_name}")
+        repo = g.get_repo(f"{repo_owner}/{repo_name}")
+        logging.info(f"Streaming commits for {repo_owner}/{repo_name}")
+        for commit in repo.get_commits():
+            if len(commit.parents) > 1:
+                continue
+            try:
+                yield repo.get_commit(commit.sha)
+            except Exception as e:
+                logging.error(f"Error fetching commit {commit.sha}: {e}")
+                continue
+    except Exception as e:
+        logging.error(f"Error fetching commits for {repo_owner}/{repo_name}: {e}")
+        st.error(
+            f"Failed to fetch commits for {repo_owner}/{repo_name}. Please check the repository details and your GitHub API key. Error: {e}"
+        )
+
+
 def _process_single_commit(commit) -> str:
     info = (
         f"\n\nCommit: {commit.sha}"
@@ -117,21 +140,35 @@ def compute_daily_stats_table(commits, max_count: int) -> str:
         daily[date]["additions"] += stats.additions
         daily[date]["deletions"] += stats.deletions
 
-    header = "| Date | Check-ins | Lines Added | Lines Deleted |"
-    separator = "|------|-----------|-------------|---------------|"
+    header = "| Date | Check-ins | Lines Added | Lines Deleted | Lines Added/Check-in | Lines Deleted/Check-in |"
+    separator = "|------|-----------|-------------|---------------|----------------------|------------------------|"
     lines = [header, separator]
 
     totals = {"checkins": 0, "additions": 0, "deletions": 0}
     for day in sorted(daily):
         stats = daily[day]
+        checkin_denominator = stats["checkins"] or 1
         lines.append(
-            f"| {day} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} |"
+            f"| {day} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} | "
+            f"{stats['additions'] / checkin_denominator:.2f} | "
+            f"{stats['deletions'] / checkin_denominator:.2f} |"
         )
         for key in totals:
             totals[key] += stats[key]
 
+    periods = len(daily) if daily else 1
+    checkins_per_period = totals["checkins"] / periods
+    checkin_denominator = totals["checkins"] or 1
+    averages = {
+        "checkins": checkins_per_period,
+        "additions": totals["additions"] / checkin_denominator,
+        "deletions": totals["deletions"] / checkin_denominator,
+    }
     lines.append(
         f"| **Total** | **{totals['checkins']}** | **{totals['additions']}** | **{totals['deletions']}** |"
+    )
+    lines.append(
+        f"| **Average** | **{averages['checkins']:.2f}** | **{averages['additions']:.2f}** | **{averages['deletions']:.2f}** |"
     )
     return "\n".join(lines)
 
@@ -151,21 +188,35 @@ def compute_weekly_stats_table(commits, max_count: int) -> str:
         weekly[key]["additions"] += stats.additions
         weekly[key]["deletions"] += stats.deletions
 
-    header = "| Week | Check-ins | Lines Added | Lines Deleted |"
-    separator = "|------|-----------|-------------|---------------|"
+    header = "| Week | Check-ins | Lines Added | Lines Deleted | Lines Added/Check-in | Lines Deleted/Check-in |"
+    separator = "|------|-----------|-------------|---------------|----------------------|------------------------|"
     lines = [header, separator]
 
     totals = {"checkins": 0, "additions": 0, "deletions": 0}
     for week in sorted(weekly):
         stats = weekly[week]
+        checkin_denominator = stats["checkins"] or 1
         lines.append(
-            f"| {week} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} |"
+            f"| {week} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} | "
+            f"{stats['additions'] / checkin_denominator:.2f} | "
+            f"{stats['deletions'] / checkin_denominator:.2f} |"
         )
         for key in totals:
             totals[key] += stats[key]
 
+    periods = len(weekly) if weekly else 1
+    checkins_per_period = totals["checkins"] / periods
+    checkin_denominator = totals["checkins"] or 1
+    averages = {
+        "checkins": checkins_per_period,
+        "additions": totals["additions"] / checkin_denominator,
+        "deletions": totals["deletions"] / checkin_denominator,
+    }
     lines.append(
         f"| **Total** | **{totals['checkins']}** | **{totals['additions']}** | **{totals['deletions']}** |"
+    )
+    lines.append(
+        f"| **Average** | **{averages['checkins']:.2f}** | **{averages['additions']:.2f}** | **{averages['deletions']:.2f}** |"
     )
     return "\n".join(lines)
 
@@ -184,21 +235,35 @@ def compute_monthly_stats_table(commits, max_count: int) -> str:
         monthly[key]["additions"] += stats.additions
         monthly[key]["deletions"] += stats.deletions
 
-    header = "| Month | Check-ins | Lines Added | Lines Deleted |"
-    separator = "|------|-----------|-------------|---------------|"
+    header = "| Month | Check-ins | Lines Added | Lines Deleted | Lines Added/Check-in | Lines Deleted/Check-in |"
+    separator = "|------|-----------|-------------|---------------|----------------------|------------------------|"
     lines = [header, separator]
 
     totals = {"checkins": 0, "additions": 0, "deletions": 0}
     for month in sorted(monthly):
         stats = monthly[month]
+        checkin_denominator = stats["checkins"] or 1
         lines.append(
-            f"| {month} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} |"
+            f"| {month} | {stats['checkins']} | {stats['additions']} | {stats['deletions']} | "
+            f"{stats['additions'] / checkin_denominator:.2f} | "
+            f"{stats['deletions'] / checkin_denominator:.2f} |"
         )
         for key in totals:
             totals[key] += stats[key]
 
+    periods = len(monthly) if monthly else 1
+    checkins_per_period = totals["checkins"] / periods
+    checkin_denominator = totals["checkins"] or 1
+    averages = {
+        "checkins": checkins_per_period,
+        "additions": totals["additions"] / checkin_denominator,
+        "deletions": totals["deletions"] / checkin_denominator,
+    }
     lines.append(
         f"| **Total** | **{totals['checkins']}** | **{totals['additions']}** | **{totals['deletions']}** |"
+    )
+    lines.append(
+        f"| **Average** | **{averages['checkins']:.2f}** | **{averages['additions']:.2f}** | **{averages['deletions']:.2f}** |"
     )
     return "\n".join(lines)
 
@@ -221,6 +286,9 @@ def compute_daily_stats_df(commits, max_count: int) -> pd.DataFrame:
     for day in sorted(daily):
         rec = {"Date": str(day)}
         rec.update(daily[day])
+        checkin_denominator = daily[day]["Check-ins"] or 1
+        rec["Lines Added/Check-in"] = daily[day]["Lines Added"] / checkin_denominator
+        rec["Lines Deleted/Check-in"] = daily[day]["Lines Deleted"] / checkin_denominator
         records.append(rec)
     return pd.DataFrame(records)
 
@@ -245,6 +313,9 @@ def compute_weekly_stats_df(commits, max_count: int) -> pd.DataFrame:
     for week in sorted(weekly):
         rec = {"Week": week}
         rec.update(weekly[week])
+        checkin_denominator = weekly[week]["Check-ins"] or 1
+        rec["Lines Added/Check-in"] = weekly[week]["Lines Added"] / checkin_denominator
+        rec["Lines Deleted/Check-in"] = weekly[week]["Lines Deleted"] / checkin_denominator
         records.append(rec)
     return pd.DataFrame(records)
 
@@ -268,6 +339,9 @@ def compute_monthly_stats_df(commits, max_count: int) -> pd.DataFrame:
     for month in sorted(monthly):
         rec = {"Month": month}
         rec.update(monthly[month])
+        checkin_denominator = monthly[month]["Check-ins"] or 1
+        rec["Lines Added/Check-in"] = monthly[month]["Lines Added"] / checkin_denominator
+        rec["Lines Deleted/Check-in"] = monthly[month]["Lines Deleted"] / checkin_denominator
         records.append(rec)
     return pd.DataFrame(records)
 

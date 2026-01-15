@@ -1,19 +1,47 @@
-# 🎈 Blank app template
+# GitOwner
 
-A simple Streamlit app template for you to modify!
+GitOwner is a Streamlit app that analyzes GitHub repositories to surface contributor insights and code change patterns. It can summarize commit activity with LLM-assisted analysis and generate line-count trends (daily/weekly/monthly) for a selected repo.
 
-[![Open in Streamlit](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://blank-app-template.streamlit.app/)
+## Features
+- Repository picker for an owner/org and repo
+- Line count reports with graphs and tables
+- Contributor analysis powered by OpenAI (chunked commit summaries + final synthesis)
 
-### How to run it on your own machine
+## Requirements
+- Python 3.9+
+- GitHub API token with read access
+- OpenAI API key
 
-1. Install the requirements
-
+## Setup
+1. Create and activate a virtual environment (recommended)
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
    ```
-   $ pip install -r requirements.txt
+2. Install dependencies
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Configure Streamlit secrets (see below)
+4. Run the app
+   ```bash
+   streamlit run streamlit_app.py
    ```
 
-2. Run the app
+## Streamlit Secrets Configuration
+This app reads secrets via `st.secrets`. Create a local file at `.streamlit/secrets.toml`:
 
-   ```
-   $ streamlit run streamlit_app.py
-   ```
+```toml
+GITHUB_API_KEY = "ghp_your_github_token"
+OPENAI_API_KEY = "sk_your_openai_key"
+```
+
+Notes:
+- GitHub token needs permissions to read the target repositories.
+- For Streamlit Cloud, add the same keys under your app’s **Settings → Secrets**.
+- Do not commit `.streamlit/secrets.toml` to source control.
+
+## Usage
+- Enter a GitHub owner/org in the sidebar.
+- Pick a repository, set commit count, and choose analysis type.
+- Use "Run Line Count Analysis" for stats or "Run Contributor Analysis" for LLM summaries.
