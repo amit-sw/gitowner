@@ -239,9 +239,9 @@ def run_line_count_analysis(
                     monthly_df = _build_stats_df(monthly_snapshot, "Month", include_per_checkin=True)
                     with display_placeholder.container():
                         st.subheader(f"Stats for last {processed_count} check-ins")
-                        tabs = st.tabs(["Graphs", "Tables"])
+                        tabs = st.tabs(["Tables", "Graphs"])
 
-                        with tabs[0]:
+                        with tabs[1]:
                             if not daily_df.empty:
                                 st.subheader("Daily")
                                 st.line_chart(
@@ -260,7 +260,7 @@ def run_line_count_analysis(
                                     monthly_df.set_index(monthly_df.columns[0])[["Lines Added", "Lines Deleted"]]
                                 )
 
-                        with tabs[1]:
+                        with tabs[0]:
                             if daily_table:
                                 st.subheader("Daily")
                                 st.markdown(daily_table)
@@ -313,9 +313,9 @@ def run_line_count_analysis(
                     update_status(f"Computed stats for last {current_count} check-ins.")
                     with display_placeholder.container():
                         st.subheader(f"Stats for last {current_count} check-ins")
-                        tabs = st.tabs(["Graphs", "Tables"])
+                        tabs = st.tabs(["Tables", "Graphs"])
 
-                        with tabs[0]:
+                        with tabs[1]:
                             if daily_df is not None:
                                 st.subheader("Daily")
                                 st.line_chart(
@@ -334,7 +334,7 @@ def run_line_count_analysis(
                                     monthly_df.set_index(monthly_df.columns[0])[["Lines Added", "Lines Deleted"]]
                                 )
 
-                        with tabs[1]:
+                        with tabs[0]:
                             if daily_table:
                                 st.subheader("Daily")
                                 st.markdown(daily_table)
